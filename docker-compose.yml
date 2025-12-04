@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  mia-backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mia-backend
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=production
+      - PORT=3000
+      # Add your YandexGPT API credentials here or use .env file
+      - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID:-}
+      - YANDEX_API_KEY=${YANDEX_API_KEY:-}
+    restart: unless-stopped
+    networks:
+      - mia-network
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+networks:
+  mia-network:
+    driver: bridge
