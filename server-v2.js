@@ -36,6 +36,8 @@ const server = http.createServer(async (req, res) => {
         await handleScheduleNotifications(req, res);
     } else if (req.url === '/api/tg/send' && req.method === 'POST') {
         await handleTelegramFeedback(req, res);
+    } else if (req.url === '/api/analytics/event' && req.method === 'POST') {
+        await handleAnalyticsEvent(req, res);
     } else if (req.url === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
@@ -252,12 +254,65 @@ async function sendTelegramPhoto(botToken, chatId, base64Image) {
     });
 }
 
+async function handleAnalyticsEvent(req, res) {
+    let body = '';
+
+    req.on('data', chunk => {
+        body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+        try {
+            const event = JSON.parse(body);
+
+            // Валидация
+            if (!event.eventName) {
+                throw new Error('Invalid request: eventName required');
+            }
+
+            // Логирование события
+            const timestamp = new Date().toISOString();
+            const logEntry = {
+                timestamp,
+                eventName: event.eventName,
+                userId: event.userId || 'anonymous',
+                screen: event.screen || 'unknown',
+                properties: event.properties || {},
+                deviceInfo: {
+                    platform: event.platform || 'unknown',
+                    appVersion: event.appVersion || 'unknown'
+                }
+            };
+
+            console.log(`📊 [Analytics] ${logEntry.eventName} | User: ${logEntry.userId} | Screen: ${logEntry.screen}`);
+            if (Object.keys(logEntry.properties).length > 0) {
+                console.log(`📊 [Analytics] Properties:`, JSON.stringify(logEntry.properties));
+            }
+
+            // В будущем можно сохранять в БД или отправлять в аналитику
+            // Пока просто логируем
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+
+        } catch (error) {
+            console.error('❌ [Analytics] Error:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: 'Internal server error',
+                details: error.message
+            }));
+        }
+    });
+}
+
 server.listen(PORT, () => {
     console.log(`\n🚀 Smart Notifications Server`);
     console.log(`📡 Running on http://localhost:${PORT}`);
     console.log(`\n📍 Endpoints:`);
     console.log(`   POST /api/schedule-notifications - Schedule smart notifications`);
     console.log(`   POST /api/tg/send - Send feedback to Telegram`);
+    console.log(`   POST /api/analytics/event - Track analytics events`);
     console.log(`   GET  /health - Health check`);
     console.log(`\n💡 Test with iOS app or curl`);
     console.log(`\n`);
