@@ -289,8 +289,10 @@ async function handleAnalyticsEvent(req, res) {
                 console.log(`📊 [Analytics] Properties:`, JSON.stringify(logEntry.properties));
             }
 
-            // В будущем можно сохранять в БД или отправлять в аналитику
-            // Пока просто логируем
+            // Отправляем в Telegram (асинхронно)
+            sendAnalyticsToTelegram(logEntry).catch(err => {
+                console.error(`❌ [Analytics] Telegram send error:`, err);
+            });
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true }));
@@ -303,6 +305,74 @@ async function handleAnalyticsEvent(req, res) {
                 details: error.message
             }));
         }
+    });
+}
+
+async function sendAnalyticsToTelegram(logEntry) {
+    const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+        return; // Тихо пропускаем если нет credentials
+    }
+
+    const eventEmoji = {
+        'button_click': '🖱️',
+        'screen_view': '📱',
+        'habit_completed': '✅',
+        'habit_created': '➕',
+        'habit_deleted': '🗑️',
+        'notification_scheduled': '🔔',
+        'feedback_sent': '💬'
+    };
+
+    const emoji = eventEmoji[logEntry.eventName] || '📊';
+
+    let text = `${emoji} ${logEntry.eventName}\n\n`;
+    text += `👤 User: ${logEntry.userId}\n`;
+    text += `📱 Screen: ${logEntry.screen}\n`;
+    text += `⏰ Time: ${new Date(logEntry.timestamp).toLocaleString('ru-RU')}\n`;
+
+    if (Object.keys(logEntry.properties).length > 0) {
+        text += `\n📝 Properties:\n`;
+        for (const [key, value] of Object.entries(logEntry.properties)) {
+            text += `  • ${key}: ${value}\n`;
+        }
+    }
+
+    text += `\n🔧 Platform: ${logEntry.deviceInfo.platform} | v${logEntry.deviceInfo.appVersion}`;
+
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const payload = JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: text
+    });
+
+    return new Promise((resolve, reject) => {
+        const options = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(payload)
+            }
+        };
+
+        const req = https.request(url, options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    console.log(`✅ [Analytics] Sent to Telegram`);
+                    resolve();
+                } else {
+                    reject(new Error(`Telegram API error: ${data}`));
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.write(payload);
+        req.end();
     });
 }
 
