@@ -87,6 +87,7 @@ async function handleScheduleNotifications(req, res) {
 
 async function handleTelegramFeedback(req, res) {
     let body = '';
+    const startTime = Date.now();
 
     req.on('data', chunk => {
         body += chunk.toString();
@@ -96,15 +97,22 @@ async function handleTelegramFeedback(req, res) {
         try {
             const request = JSON.parse(body);
 
-            console.log(`📬 [Telegram] Feedback received`);
+            console.log(`📬 [Telegram] Feedback received (${(body.length / 1024).toFixed(1)}KB)`);
+            console.log(`📬 [Telegram] Type: ${request.type}, Has screenshot: ${!!request.screenshot}`);
 
             // Валидация
             if (!request.type || !request.message) {
                 throw new Error('Invalid request: type and message required');
             }
 
-            // Отправка в Telegram
-            await sendToTelegram(request);
+            // Отправка в Telegram (не ждем завершения для быстрого ответа)
+            sendToTelegram(request).catch(err => {
+                console.error(`❌ [Telegram] Async send error:`, err);
+            });
+
+            // Быстро отвечаем клиенту
+            const responseTime = Date.now() - startTime;
+            console.log(`✅ [Telegram] Response sent in ${responseTime}ms`);
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true }));
@@ -149,6 +157,7 @@ async function sendToTelegram(feedback) {
     }
 
     // Отправка текста
+    console.log(`📤 [Telegram] Sending message...`);
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     const textPayload = JSON.stringify({
         chat_id: TELEGRAM_CHAT_ID,
@@ -173,18 +182,23 @@ async function sendToTelegram(feedback) {
                     console.log(`✅ [Telegram] Message sent`);
                     resolve();
                 } else {
+                    console.error(`❌ [Telegram] Message failed: ${res.statusCode} ${data}`);
                     reject(new Error(`Telegram API error: ${data}`));
                 }
             });
         });
 
-        req.on('error', reject);
+        req.on('error', (err) => {
+            console.error(`❌ [Telegram] Request error:`, err);
+            reject(err);
+        });
         req.write(textPayload);
         req.end();
     });
 
     // Отправка скриншота если есть
     if (feedback.screenshot) {
+        console.log(`📸 [Telegram] Sending screenshot (${(feedback.screenshot.length / 1024).toFixed(1)}KB)...`);
         await sendTelegramPhoto(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, feedback.screenshot);
     }
 }
