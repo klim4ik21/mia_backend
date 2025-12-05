@@ -99,6 +99,8 @@ async function handleTelegramFeedback(req, res) {
 
             console.log(`📬 [Telegram] Feedback received (${(body.length / 1024).toFixed(1)}KB)`);
             console.log(`📬 [Telegram] Type: ${request.type}, Has screenshot: ${!!request.screenshot}`);
+            console.log(`📬 [Telegram] Message: "${request.message}"`);
+            console.log(`📬 [Telegram] Username: "${request.username}"`);
 
             // Валидация
             if (!request.type || !request.message) {
@@ -144,31 +146,21 @@ async function sendToTelegram(feedback) {
 
     const emoji = typeEmoji[feedback.type] || '📝';
 
-    // Экранируем HTML символы
-    const escapeHtml = (text) => {
-        return text
-            .replace(/&/g, '&amp;')
-            .replace(/</g, '&lt;')
-            .replace(/>/g, '&gt;')
-            .replace(/"/g, '&quot;');
-    };
-
-    let text = `${emoji} <b>${feedback.type.toUpperCase()}</b>\n\n`;
-    text += `${escapeHtml(feedback.message)}\n`;
+    let text = `${emoji} ${feedback.type.toUpperCase()}\n\n`;
+    text += `${feedback.message}\n`;
 
     if (feedback.username) {
-        text += `\n👤 User: ${escapeHtml(feedback.username)}`;
+        text += `\n👤 User: ${feedback.username}`;
     }
 
     // Отправка текста
     console.log(`📤 [Telegram] Sending message...`);
-    console.log(`📤 [Telegram] Text preview: ${text.substring(0, 100)}...`);
+    console.log(`📤 [Telegram] Text length: ${text.length} chars`);
+    console.log(`📤 [Telegram] Text: "${text}"`);
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     const textPayload = JSON.stringify({
         chat_id: TELEGRAM_CHAT_ID,
-        text: text,
-        parse_mode: 'HTML',
-        disable_web_page_preview: true
+        text: text
     });
 
     await new Promise((resolve, reject) => {
