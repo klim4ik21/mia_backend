@@ -144,11 +144,20 @@ async function sendToTelegram(feedback) {
 
     const emoji = typeEmoji[feedback.type] || '📝';
 
-    let text = `${emoji} ${feedback.type.toUpperCase()}\n\n`;
-    text += `${feedback.message}\n`;
+    // Экранируем HTML символы
+    const escapeHtml = (text) => {
+        return text
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;');
+    };
+
+    let text = `${emoji} <b>${feedback.type.toUpperCase()}</b>\n\n`;
+    text += `${escapeHtml(feedback.message)}\n`;
 
     if (feedback.username) {
-        text += `\n👤 User: ${feedback.username}`;
+        text += `\n👤 User: ${escapeHtml(feedback.username)}`;
     }
 
     // Отправка текста
@@ -158,6 +167,7 @@ async function sendToTelegram(feedback) {
     const textPayload = JSON.stringify({
         chat_id: TELEGRAM_CHAT_ID,
         text: text,
+        parse_mode: 'HTML',
         disable_web_page_preview: true
     });
 
