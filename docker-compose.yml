@@ -11,9 +11,12 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=3000
-      # Add your YandexGPT API credentials here or use .env file
+      # YandexGPT API credentials
       - YANDEX_FOLDER_ID=${YANDEX_FOLDER_ID:-}
       - YANDEX_API_KEY=${YANDEX_API_KEY:-}
+      # Telegram Bot credentials
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     restart: unless-stopped
     networks:
       - mia-network
