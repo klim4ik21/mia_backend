@@ -153,10 +153,12 @@ async function sendToTelegram(feedback) {
 
     // Отправка текста
     console.log(`📤 [Telegram] Sending message...`);
+    console.log(`📤 [Telegram] Text preview: ${text.substring(0, 100)}...`);
     const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
     const textPayload = JSON.stringify({
         chat_id: TELEGRAM_CHAT_ID,
-        text: text
+        text: text,
+        disable_web_page_preview: true
     });
 
     await new Promise((resolve, reject) => {
