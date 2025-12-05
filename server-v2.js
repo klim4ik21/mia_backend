@@ -148,7 +148,7 @@ async function sendToTelegram(feedback) {
     text += `${feedback.message}\n`;
 
     if (feedback.username) {
-        text += `\n👤 User: @${feedback.username}`;
+        text += `\n👤 User: ${feedback.username}`;
     }
 
     // Отправка текста
