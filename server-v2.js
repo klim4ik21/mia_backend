@@ -1,6 +1,7 @@
 // Локальный сервер для тестирования умных уведомлений
 require('dotenv').config();
 const http = require('http');
+const https = require('https');
 const YandexGPTService = require('./yandex-gpt-service');
 const AIPlanner = require('./ai-planner');
 const SchedulingService = require('./scheduling-service');
@@ -33,6 +34,8 @@ const server = http.createServer(async (req, res) => {
     // Роутинг
     if (req.url === '/api/schedule-notifications' && req.method === 'POST') {
         await handleScheduleNotifications(req, res);
+    } else if (req.url === '/api/tg/send' && req.method === 'POST') {
+        await handleTelegramFeedback(req, res);
     } else if (req.url === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
@@ -82,11 +85,162 @@ async function handleScheduleNotifications(req, res) {
     });
 }
 
+async function handleTelegramFeedback(req, res) {
+    let body = '';
+
+    req.on('data', chunk => {
+        body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+        try {
+            const request = JSON.parse(body);
+
+            console.log(`📬 [Telegram] Feedback received`);
+
+            // Валидация
+            if (!request.type || !request.message) {
+                throw new Error('Invalid request: type and message required');
+            }
+
+            // Отправка в Telegram
+            await sendToTelegram(request);
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+
+        } catch (error) {
+            console.error('❌ [Telegram] Error:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: 'Internal server error',
+                details: error.message
+            }));
+        }
+    });
+}
+
+async function sendToTelegram(feedback) {
+    const TELEGRAM_BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
+    const TELEGRAM_CHAT_ID = process.env.TELEGRAM_CHAT_ID;
+
+    if (!TELEGRAM_BOT_TOKEN || !TELEGRAM_CHAT_ID) {
+        throw new Error('Telegram credentials not configured');
+    }
+
+    const typeEmoji = {
+        'bug': '🐛',
+        'idea': '💡',
+        'feedback': '💬'
+    };
+
+    const emoji = typeEmoji[feedback.type] || '📝';
+
+    let text = `${emoji} *${feedback.type.toUpperCase()}*\n\n`;
+    text += `${feedback.message}\n`;
+
+    if (feedback.username) {
+        text += `\n👤 User: @${feedback.username}`;
+    }
+
+    // Отправка текста
+    const url = `https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`;
+    const textPayload = JSON.stringify({
+        chat_id: TELEGRAM_CHAT_ID,
+        text: text,
+        parse_mode: 'Markdown'
+    });
+
+    await new Promise((resolve, reject) => {
+        const options = {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(textPayload)
+            }
+        };
+
+        const req = https.request(url, options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    console.log(`✅ [Telegram] Message sent`);
+                    resolve();
+                } else {
+                    reject(new Error(`Telegram API error: ${data}`));
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.write(textPayload);
+        req.end();
+    });
+
+    // Отправка скриншота если есть
+    if (feedback.screenshot) {
+        await sendTelegramPhoto(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, feedback.screenshot);
+    }
+}
+
+async function sendTelegramPhoto(botToken, chatId, base64Image) {
+    const url = `https://api.telegram.org/bot${botToken}/sendPhoto`;
+
+    // Убираем data:image/png;base64, если есть
+    const imageData = base64Image.replace(/^data:image\/\w+;base64,/, '');
+    const buffer = Buffer.from(imageData, 'base64');
+
+    const boundary = '----WebKitFormBoundary' + Math.random().toString(36);
+
+    let body = '';
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="chat_id"\r\n\r\n`;
+    body += `${chatId}\r\n`;
+    body += `--${boundary}\r\n`;
+    body += `Content-Disposition: form-data; name="photo"; filename="screenshot.png"\r\n`;
+    body += `Content-Type: image/png\r\n\r\n`;
+
+    const bodyBuffer = Buffer.concat([
+        Buffer.from(body, 'utf8'),
+        buffer,
+        Buffer.from(`\r\n--${boundary}--\r\n`, 'utf8')
+    ]);
+
+    return new Promise((resolve, reject) => {
+        const options = {
+            method: 'POST',
+            headers: {
+                'Content-Type': `multipart/form-data; boundary=${boundary}`,
+                'Content-Length': bodyBuffer.length
+            }
+        };
+
+        const req = https.request(url, options, (res) => {
+            let data = '';
+            res.on('data', chunk => data += chunk);
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    console.log(`✅ [Telegram] Screenshot sent`);
+                    resolve();
+                } else {
+                    reject(new Error(`Telegram photo API error: ${data}`));
+                }
+            });
+        });
+
+        req.on('error', reject);
+        req.write(bodyBuffer);
+        req.end();
+    });
+}
+
 server.listen(PORT, () => {
     console.log(`\n🚀 Smart Notifications Server`);
     console.log(`📡 Running on http://localhost:${PORT}`);
     console.log(`\n📍 Endpoints:`);
     console.log(`   POST /api/schedule-notifications - Schedule smart notifications`);
+    console.log(`   POST /api/tg/send - Send feedback to Telegram`);
     console.log(`   GET  /health - Health check`);
     console.log(`\n💡 Test with iOS app or curl`);
     console.log(`\n`);
