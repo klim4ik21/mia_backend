@@ -136,11 +136,16 @@ async function sendToTelegram(feedback) {
 
     const emoji = typeEmoji[feedback.type] || '📝';
 
+    // Экранируем специальные символы Markdown
+    const escapeMarkdown = (text) => {
+        return text.replace(/([_*\[\]()~`>#+\-=|{}.!])/g, '\\$1');
+    };
+
     let text = `${emoji} *${feedback.type.toUpperCase()}*\n\n`;
-    text += `${feedback.message}\n`;
+    text += `${escapeMarkdown(feedback.message)}\n`;
 
     if (feedback.username) {
-        text += `\n👤 User: @${feedback.username}`;
+        text += `\n👤 User: @${escapeMarkdown(feedback.username)}`;
     }
 
     // Отправка текста
@@ -148,7 +153,7 @@ async function sendToTelegram(feedback) {
     const textPayload = JSON.stringify({
         chat_id: TELEGRAM_CHAT_ID,
         text: text,
-        parse_mode: 'Markdown'
+        parse_mode: 'MarkdownV2'
     });
 
     await new Promise((resolve, reject) => {
