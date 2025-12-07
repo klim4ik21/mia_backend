@@ -95,6 +95,9 @@ const server = http.createServer(async (req, res) => {
         } else if (pathname === '/api/subscription/status' && req.method === 'GET') {
             console.log(`✅ [Server] [${requestId}] Routing to handleSubscriptionStatus`);
             await handleSubscriptionStatus(req, res, url, requestId);
+        } else if (pathname === '/api/subscription/cancel' && req.method === 'POST') {
+            console.log(`✅ [Server] [${requestId}] Routing to handleCancelSubscription`);
+            await handleCancelSubscription(req, res, requestId);
         } else if (pathname === '/health' && req.method === 'GET') {
             console.log(`✅ [Server] [${requestId}] Health check`);
             res.writeHead(200, { 'Content-Type': 'application/json' });
@@ -456,6 +459,7 @@ async function sendAnalyticsToTelegram(logEntry) {
 // ==================== Payment Handlers ====================
 
 async function handleCreatePayment(req, res, requestId) {
+    // Важно: не завершаем запрос до обработки body
     let body = '';
 
     req.on('data', chunk => {
@@ -463,6 +467,7 @@ async function handleCreatePayment(req, res, requestId) {
     });
 
     req.on('end', async () => {
+        // Убираем логирование времени здесь, так как запрос еще не завершен
         try {
             console.log(`📦 [Payment] [${requestId}] Request body received: ${body.length} bytes`);
             const request = JSON.parse(body);
@@ -701,6 +706,46 @@ async function handleSubscriptionStatus(req, res, url, requestId = 'unknown') {
     }
 }
 
+async function handleCancelSubscription(req, res, requestId) {
+    let body = '';
+
+    req.on('data', chunk => {
+        body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+        try {
+            const request = body ? JSON.parse(body) : {};
+            const userId = request.userId || req.headers['x-user-id'] || 'anonymous';
+
+            console.log(`🗑️ [Subscription] [${requestId}] Cancelling subscription for user: ${userId}`);
+
+            // Удаляем подписку из хранилища
+            const subscription = subscriptionsStore.get(userId);
+            if (subscription) {
+                subscriptionsStore.delete(userId);
+                console.log(`✅ [Subscription] [${requestId}] Subscription cancelled for user: ${userId}`);
+            } else {
+                console.log(`⚠️ [Subscription] [${requestId}] No active subscription found for user: ${userId}`);
+            }
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: true,
+                message: 'Subscription cancelled'
+            }));
+
+        } catch (error) {
+            console.error(`❌ [Subscription] [${requestId}] Error:`, error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: 'Failed to cancel subscription',
+                details: error.message
+            }));
+        }
+    });
+}
+
 /**
  * Вычисляет дату истечения подписки на основе плана
  */
@@ -727,6 +772,7 @@ server.listen(PORT, () => {
     console.log(`   GET  /api/payments/:paymentId/status - Check payment status`);
     console.log(`   POST /api/subscription/activate - Activate subscription`);
     console.log(`   GET  /api/subscription/status?userId=xxx - Check subscription status`);
+    console.log(`   POST /api/subscription/cancel - Cancel subscription (test)`);
     console.log(`   GET  /health - Health check`);
     console.log(`\n💳 Payment Service: ${yooKassa ? '✅ Configured' : '⚠️  Not configured (set YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY)'}`);
     console.log(`\n💡 Test with iOS app or curl`);
