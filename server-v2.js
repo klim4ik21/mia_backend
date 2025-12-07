@@ -5,6 +5,7 @@ const https = require('https');
 const YandexGPTService = require('./yandex-gpt-service');
 const AIPlanner = require('./ai-planner');
 const SchedulingService = require('./scheduling-service');
+const { NotificationOrchestrator } = require('./engines');
 
 const PORT = process.env.PORT || 3000;
 
@@ -13,8 +14,13 @@ const YANDEX_GPT_API_KEY = process.env.YANDEX_API_KEY;
 const YANDEX_GPT_FOLDER_ID = process.env.YANDEX_FOLDER_ID;
 
 const yandexGPT = new YandexGPTService(YANDEX_GPT_API_KEY, YANDEX_GPT_FOLDER_ID);
+
+// Используем новый NotificationOrchestrator с движками
+const notificationOrchestrator = new NotificationOrchestrator(yandexGPT);
+const schedulingService = new SchedulingService(notificationOrchestrator);
+
+// Сохраняем aiPlanner для обратной совместимости (если нужен)
 const aiPlanner = new AIPlanner(yandexGPT);
-const schedulingService = new SchedulingService(aiPlanner);
 
 const server = http.createServer(async (req, res) => {
     console.log(`\n📨 [Server] ${req.method} ${req.url}`);

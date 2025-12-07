@@ -1,10 +1,19 @@
 // Scheduling Service - умное планирование уведомлений на 2 дня
 
 const crypto = require('crypto');
+const { NotificationOrchestrator } = require('./engines');
 
 class SchedulingService {
-    constructor(aiPlanner) {
-        this.aiPlanner = aiPlanner;
+    constructor(notificationOrchestrator) {
+        // Поддерживаем обратную совместимость с aiPlanner
+        if (notificationOrchestrator && notificationOrchestrator.createNotifications) {
+            this.orchestrator = notificationOrchestrator;
+            this.aiPlanner = null; // Используем новый orchestrator
+        } else {
+            // Fallback на старый aiPlanner для обратной совместимости
+            this.aiPlanner = notificationOrchestrator;
+            this.orchestrator = null;
+        }
     }
 
     /**
@@ -29,7 +38,25 @@ class SchedulingService {
             console.log(`   - Consecutive misses: ${habit.consecutiveMisses}`);
 
             try {
-                const notifications = await this.aiPlanner.planForHabit(habit, now, timezone);
+                let notifications;
+                
+                // Используем новый orchestrator если доступен
+                if (this.orchestrator) {
+                    const userProfile = request.userProfile || {};
+                    notifications = await this.orchestrator.createNotifications(
+                        habit,
+                        userId,
+                        userProfile,
+                        now,
+                        timezone
+                    );
+                } else if (this.aiPlanner) {
+                    // Fallback на старый aiPlanner
+                    notifications = await this.aiPlanner.planForHabit(habit, now, timezone);
+                } else {
+                    throw new Error('No planner or orchestrator available');
+                }
+                
                 allNotifications.push(...notifications);
 
                 console.log(`   ✓ Generated ${notifications.length} notifications`);
@@ -76,6 +103,7 @@ class SchedulingService {
         // 4. Celebration - празднование (низкий приоритет)
 
         const priorityMap = {
+            'base_reminder': 4, // Базовые напоминания - самый высокий приоритет
             'reminder': 3,
             'streak_warning': 3,
             'motivation': 2,

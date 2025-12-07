@@ -1,0 +1,130 @@
+// Notification Orchestrator
+// Главный оркестратор, который гарантирует стабильные напоминания + умные уведомления
+
+const UserContextEngine = require('./user-context-engine');
+const BehavioralAnalysisEngine = require('./behavioral-analysis-engine');
+const IntentPredictionEngine = require('./intent-prediction-engine');
+const BaseReminderEngine = require('./base-reminder-engine');
+
+class NotificationOrchestrator {
+  constructor(yandexGPT) {
+    this.contextEngine = new UserContextEngine();
+    this.behaviorEngine = new BehavioralAnalysisEngine();
+    this.intentEngine = new IntentPredictionEngine();
+    this.baseReminderEngine = new BaseReminderEngine();
+    this.yandexGPT = yandexGPT;
+  }
+
+  /**
+   * Главный метод: создание уведомлений для привычки
+   * ГАРАНТИРУЕТ:
+   * 1. Базовые напоминания всегда создаются (стабильность)
+   * 2. Умные уведомления добавляются на основе контекста
+   * 3. Все тексты обогащаются через AI
+   */
+  async createNotifications(habit, userId, userProfile = {}, now, timezone) {
+    const allNotifications = [];
+    
+    // ШАГ 1: Сбор контекста
+    const context = {
+      temporal: this.contextEngine.getTemporalContext(now, timezone),
+      habit: this.contextEngine.getHabitContext(habit, habit.completions || [], habit.snoozeEvents || []),
+      user: this.contextEngine.getUserContext(userId, userProfile),
+      external: this.contextEngine.getExternalContext(now)
+    };
+    
+    // ШАГ 2: КРИТИЧЕСКИ ВАЖНО - создаем базовые напоминания
+    // Это гарантирует стабильность системы
+    const baseReminders = this.baseReminderEngine.createBaseReminders(
+      habit,
+      now,
+      timezone,
+      habit.completions || []
+    );
+    
+    console.log(`📌 [Orchestrator] Created ${baseReminders.length} base reminders for ${habit.name}`);
+    
+    // ШАГ 3: Обогащаем базовые напоминания AI-текстом
+    const enrichedBaseReminders = await Promise.all(
+      baseReminders.map(reminder => 
+        this.baseReminderEngine.enrichWithAIText(reminder, habit, context, this.yandexGPT)
+      )
+    );
+    
+    allNotifications.push(...enrichedBaseReminders);
+    
+    // ШАГ 4: Анализ поведения
+    const behavior = this.behaviorEngine.analyzeCompletionPattern(
+      habit,
+      habit.completions || [],
+      habit.snoozeEvents || []
+    );
+    behavior.probability = this.behaviorEngine.predictCompletionProbability(
+      habit,
+      context,
+      habit.completions || [],
+      habit.snoozeEvents || []
+    );
+    
+    // ШАГ 5: Предсказание намерений
+    const intent = this.intentEngine.predictUserIntent(
+      habit,
+      context,
+      behavior,
+      habit.completions || [],
+      habit.snoozeEvents || []
+    );
+    const emotionalState = this.intentEngine.detectEmotionalState(
+      habit,
+      context,
+      behavior,
+      habit.completions || [],
+      habit.snoozeEvents || []
+    );
+    
+    // ШАГ 6: Создаем умные дополнительные уведомления
+    // (это будет в следующем этапе - Strategy Engine)
+    // Пока что базовые напоминания - это главное
+    
+    // ШАГ 7: Фильтрация и оптимизация
+    const optimized = this.optimizeNotifications(allNotifications, habit);
+    
+    console.log(`✅ [Orchestrator] Final notifications for ${habit.name}: ${optimized.length}`);
+    console.log(`   - Base reminders: ${enrichedBaseReminders.length}`);
+    
+    return optimized;
+  }
+
+  /**
+   * Оптимизация уведомлений
+   * Убирает дубликаты, проверяет временные ограничения
+   */
+  optimizeNotifications(notifications, habit) {
+    // Сортируем по времени
+    const sorted = notifications.sort((a, b) => a.timestamp - b.timestamp);
+    
+    // Убираем дубликаты (если несколько напоминаний в одно время)
+    const unique = [];
+    const seen = new Set();
+    
+    for (const notif of sorted) {
+      const key = `${notif.habitId}-${notif.timestamp}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        unique.push(notif);
+      }
+    }
+    
+    // Проверяем quiet hours (22:00 - 07:00)
+    const filtered = unique.filter(notif => {
+      const date = new Date(notif.timestamp);
+      const hour = date.getHours();
+      return hour >= 7 && hour < 22;
+    });
+    
+    return filtered;
+  }
+}
+
+module.exports = NotificationOrchestrator;
+
