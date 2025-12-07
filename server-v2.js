@@ -50,26 +50,31 @@ const server = http.createServer(async (req, res) => {
     }
 
     // Роутинг
-    if (req.url === '/api/schedule-notifications' && req.method === 'POST') {
+    // Парсим URL для правильной обработки query параметров
+    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+    const pathname = url.pathname;
+
+    if (pathname === '/api/schedule-notifications' && req.method === 'POST') {
         await handleScheduleNotifications(req, res);
-    } else if (req.url === '/api/tg/send' && req.method === 'POST') {
+    } else if (pathname === '/api/tg/send' && req.method === 'POST') {
         await handleTelegramFeedback(req, res);
-    } else if (req.url === '/api/analytics/event' && req.method === 'POST') {
+    } else if (pathname === '/api/analytics/event' && req.method === 'POST') {
         await handleAnalyticsEvent(req, res);
-    } else if (req.url === '/api/payments/create' && req.method === 'POST') {
+    } else if (pathname === '/api/payments/create' && req.method === 'POST') {
         await handleCreatePayment(req, res);
-    } else if (req.url.startsWith('/api/payments/') && req.url.endsWith('/status') && req.method === 'GET') {
+    } else if (pathname.startsWith('/api/payments/') && pathname.endsWith('/status') && req.method === 'GET') {
         await handlePaymentStatus(req, res);
-    } else if (req.url === '/api/subscription/activate' && req.method === 'POST') {
+    } else if (pathname === '/api/subscription/activate' && req.method === 'POST') {
         await handleActivateSubscription(req, res);
-    } else if (req.url === '/api/subscription/status' && req.method === 'GET') {
+    } else if (pathname === '/api/subscription/status' && req.method === 'GET') {
         await handleSubscriptionStatus(req, res);
-    } else if (req.url === '/health' && req.method === 'GET') {
+    } else if (pathname === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
     } else {
+        console.log(`⚠️ [Server] 404: ${req.method} ${req.url}`);
         res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found' }));
+        res.end(JSON.stringify({ error: 'Not found', path: pathname }));
     }
 });
 
@@ -470,7 +475,9 @@ async function handleCreatePayment(req, res) {
 async function handlePaymentStatus(req, res) {
     try {
         // Извлекаем paymentId из URL: /api/payments/:paymentId/status
-        const urlParts = req.url.split('/');
+        const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        const pathname = url.pathname;
+        const urlParts = pathname.split('/');
         const paymentId = urlParts[urlParts.length - 2]; // предпоследний элемент
 
         if (!paymentId) {
