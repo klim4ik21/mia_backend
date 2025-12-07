@@ -43,13 +43,25 @@ class SchedulingService {
                 // Используем новый orchestrator если доступен
                 if (this.orchestrator) {
                     const userProfile = request.userProfile || {};
-                    notifications = await this.orchestrator.createNotifications(
+                    const result = await this.orchestrator.createNotifications(
                         habit,
                         userId,
                         userProfile,
                         now,
                         timezone
                     );
+                    
+                    // NotificationOrchestrator теперь возвращает объект с notifications и newMissedEvents
+                    if (Array.isArray(result)) {
+                        // Обратная совместимость со старым форматом
+                        notifications = result;
+                    } else {
+                        notifications = result.notifications || [];
+                        // newMissedEvents можно использовать для сохранения на клиенте
+                        if (result.newMissedEvents && result.newMissedEvents.length > 0) {
+                            console.log(`   📊 New missed events detected: ${result.newMissedEvents.length}`);
+                        }
+                    }
                 } else if (this.aiPlanner) {
                     // Fallback на старый aiPlanner
                     notifications = await this.aiPlanner.planForHabit(habit, now, timezone);

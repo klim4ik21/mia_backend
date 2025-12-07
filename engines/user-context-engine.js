@@ -1,7 +1,12 @@
 // User Context Engine - Layer 1
 // Собирает и структурирует весь контекст о пользователе
 
+const MissedTracker = require('./missed-tracker');
+
 class UserContextEngine {
+  constructor() {
+    this.missedTracker = new MissedTracker();
+  }
   /**
    * Временной контекст
    */
@@ -42,13 +47,28 @@ class UserContextEngine {
   /**
    * Контекст привычки
    */
-  getHabitContext(habit, completions = [], snoozeEvents = []) {
+  getHabitContext(habit, completions = [], snoozeEvents = [], missedEvents = [], now = Date.now()) {
+    // Автоматически проверяем и создаем missed events для пропущенных дней
+    const newMissedEvents = this.missedTracker.checkAndTrackMissedDays(
+      habit,
+      completions,
+      snoozeEvents,
+      missedEvents,
+      now
+    );
+    const allMissedEvents = [...missedEvents, ...newMissedEvents];
+    
     // Расчет статистики
     const streak = this.calculateStreak(completions);
     const completionRate = this.calculateCompletionRate(completions, habit.createdAt);
     const averageCompletionTime = this.calculateAverageCompletionTime(completions);
     const bestCompletionTime = this.findBestCompletionTime(completions);
     const worstCompletionTime = this.findWorstCompletionTime(completions);
+    
+    // Статистика пропусков через MissedTracker
+    const missedCount = this.missedTracker.getMissedCount(allMissedEvents);
+    const missedCountLast7Days = this.missedTracker.getMissedCountLast7Days(allMissedEvents, now);
+    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(allMissedEvents, now);
     
     // Анализ паттернов
     const completionPattern = this.analyzeCompletionPattern(completions);
@@ -58,13 +78,13 @@ class UserContextEngine {
     const lastSnoozeEvent = snoozeEvents.length > 0 ? snoozeEvents[snoozeEvents.length - 1] : null;
     const lastSnoozeReason = lastSnoozeEvent?.reason || null;
     const snoozeFrequency = this.calculateSnoozeFrequency(snoozeEvents, completions);
-    const emotionalConnection = this.assessEmotionalConnection(streak, completionRate, snoozeFrequency);
+    const emotionalConnection = this.assessEmotionalConnection(streak, completionRate, snoozeFrequency, missedCount);
     
     // Прогресс к milestone
     const milestones = [7, 14, 30, 100];
     const nextMilestone = milestones.find(m => m > streak) || null;
     const daysToMilestone = nextMilestone ? nextMilestone - streak : null;
-    const isAtRisk = this.isStreakAtRisk(streak, completions);
+    const isAtRisk = this.isStreakAtRisk(streak, completions, allMissedEvents);
     
     return {
       // Статистика
@@ -73,6 +93,11 @@ class UserContextEngine {
       averageCompletionTime,
       bestCompletionTime,
       worstCompletionTime,
+      
+      // Статистика пропусков
+      missedCount,
+      missedCountLast7Days,
+      consecutiveMisses,
       
       // Паттерны
       completionPattern, // "consistent" | "irregular" | "declining" | "improving"
@@ -88,7 +113,10 @@ class UserContextEngine {
         nextMilestone,
         daysToMilestone,
         isAtRisk
-      }
+      },
+      
+      // Новые missed events (для сохранения на клиенте)
+      newMissedEvents
     };
   }
 
@@ -321,17 +349,20 @@ class UserContextEngine {
     return snoozeEvents.length / (snoozeEvents.length + completions.length);
   }
 
-  assessEmotionalConnection(streak, completionRate, snoozeFrequency) {
-    if (streak > 14 && completionRate > 0.8 && snoozeFrequency < 0.2) {
+  assessEmotionalConnection(streak, completionRate, snoozeFrequency, missedCount = 0) {
+    // Учитываем пропуски при оценке эмоциональной связи
+    const missedRate = missedCount > 0 ? Math.min(1, missedCount / 30) : 0; // нормализуем к 30 дням
+    
+    if (streak > 14 && completionRate > 0.8 && snoozeFrequency < 0.2 && missedRate < 0.1) {
       return 'strong';
     }
-    if (streak > 7 && completionRate > 0.6 && snoozeFrequency < 0.4) {
+    if (streak > 7 && completionRate > 0.6 && snoozeFrequency < 0.4 && missedRate < 0.3) {
       return 'moderate';
     }
     return 'weak';
   }
 
-  isStreakAtRisk(streak, completions) {
+  isStreakAtRisk(streak, completions, missedEvents = []) {
     if (streak === 0) return false;
     
     // Проверяем, был ли streak сегодня
@@ -345,8 +376,12 @@ class UserContextEngine {
       return date.getTime() === todayTime;
     });
     
+    // Проверяем пропуски через MissedTracker
+    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(missedEvents);
+    
     // Если streak > 5 и нет выполнения сегодня - риск
-    return streak > 5 && !hasCompletionToday;
+    // Или если есть подряд пропущенные дни
+    return (streak > 5 && !hasCompletionToday) || consecutiveMisses > 0;
   }
 }
 

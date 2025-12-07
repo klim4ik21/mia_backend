@@ -179,9 +179,10 @@ class BaseReminderEngine {
     
     try {
       // Строим расширенный контекст для AI
+      // Используем вычисленный streak из context.habit, который был правильно рассчитан UserContextEngine
       const timeOfDay = context.temporal?.timeOfDay || 'anytime';
       const dayOfWeek = context.temporal?.dayOfWeek || '';
-      const streak = habit.streak || 0;
+      const streak = context.habit?.streak ?? habit.streak ?? 0; // Используем вычисленный streak из контекста
       const slot = baseReminder.slot || 'anytime';
       
       // Генерируем улучшенный текст через AI с полным контекстом
@@ -189,7 +190,7 @@ class BaseReminderEngine {
         context: `base reminder for ${slot} slot`,
         tone: 'friendly',
         habitContext: {
-          streak: streak,
+          streak: streak, // Теперь использует правильно вычисленный streak
           name: habit.name,
           emoji: habit.emoji,
           slot: slot,

@@ -25,13 +25,23 @@ class NotificationOrchestrator {
   async createNotifications(habit, userId, userProfile = {}, now, timezone) {
     const allNotifications = [];
     
-    // ШАГ 1: Сбор контекста
+    // Подготавливаем данные
+    const completions = habit.completions || [];
+    const snoozeEvents = habit.snoozeEvents || [];
+    const missedEvents = habit.missedEvents || [];
+    
+    // ШАГ 1: Сбор контекста (включая автоматический трекинг пропусков)
     const context = {
       temporal: this.contextEngine.getTemporalContext(now, timezone),
-      habit: this.contextEngine.getHabitContext(habit, habit.completions || [], habit.snoozeEvents || []),
+      habit: this.contextEngine.getHabitContext(habit, completions, snoozeEvents, missedEvents, now),
       user: this.contextEngine.getUserContext(userId, userProfile),
       external: this.contextEngine.getExternalContext(now)
     };
+    
+    // Если были созданы новые missed events, логируем их
+    if (context.habit.newMissedEvents && context.habit.newMissedEvents.length > 0) {
+      console.log(`📊 [Orchestrator] Detected ${context.habit.newMissedEvents.length} new missed days for ${habit.name}`);
+    }
     
     // ШАГ 2: КРИТИЧЕСКИ ВАЖНО - создаем базовые напоминания
     // Это гарантирует стабильность системы
@@ -53,17 +63,22 @@ class NotificationOrchestrator {
     
     allNotifications.push(...enrichedBaseReminders);
     
-    // ШАГ 4: Анализ поведения
+    // ШАГ 4: Анализ поведения (с использованием missedEvents)
+    const allMissedEvents = [...missedEvents, ...(context.habit.newMissedEvents || [])];
     const behavior = this.behaviorEngine.analyzeCompletionPattern(
       habit,
-      habit.completions || [],
-      habit.snoozeEvents || []
+      completions,
+      snoozeEvents,
+      allMissedEvents,
+      now
     );
     behavior.probability = this.behaviorEngine.predictCompletionProbability(
       habit,
       context,
-      habit.completions || [],
-      habit.snoozeEvents || []
+      completions,
+      snoozeEvents,
+      allMissedEvents,
+      now
     );
     
     // ШАГ 5: Предсказание намерений
@@ -71,16 +86,24 @@ class NotificationOrchestrator {
       habit,
       context,
       behavior,
-      habit.completions || [],
-      habit.snoozeEvents || []
+      completions,
+      snoozeEvents
     );
     const emotionalState = this.intentEngine.detectEmotionalState(
       habit,
       context,
       behavior,
-      habit.completions || [],
-      habit.snoozeEvents || []
+      completions,
+      snoozeEvents
     );
+    
+    // Логируем статистику пропусков для аналитики
+    if (allMissedEvents.length > 0) {
+      console.log(`📊 [Orchestrator] Missed stats for ${habit.name}:`);
+      console.log(`   - Total missed: ${context.habit.missedCount}`);
+      console.log(`   - Last 7 days: ${context.habit.missedCountLast7Days}`);
+      console.log(`   - Consecutive: ${context.habit.consecutiveMisses}`);
+    }
     
     // ШАГ 6: Создаем умные дополнительные уведомления
     // (это будет в следующем этапе - Strategy Engine)
@@ -92,7 +115,11 @@ class NotificationOrchestrator {
     console.log(`✅ [Orchestrator] Final notifications for ${habit.name}: ${optimized.length}`);
     console.log(`   - Base reminders: ${enrichedBaseReminders.length}`);
     
-    return optimized;
+    // Возвращаем уведомления и новые missed events для сохранения на клиенте
+    return {
+      notifications: optimized,
+      newMissedEvents: context.habit.newMissedEvents || []
+    };
   }
 
   /**

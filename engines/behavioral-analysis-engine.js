@@ -1,13 +1,22 @@
 // Behavioral Analysis Engine - Layer 2
 // Анализирует поведение и предсказывает намерения
 
+const MissedTracker = require('./missed-tracker');
+
 class BehavioralAnalysisEngine {
+  constructor() {
+    this.missedTracker = new MissedTracker();
+  }
   /**
    * Анализ паттернов выполнения
    */
-  analyzeCompletionPattern(habit, completions = [], snoozeEvents = []) {
+  analyzeCompletionPattern(habit, completions = [], snoozeEvents = [], missedEvents = [], now = Date.now()) {
     const trend = this.calculateTrend(completions);
     const momentum = this.calculateMomentum(completions);
+    
+    // Используем MissedTracker для точного подсчета пропусков
+    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(missedEvents, now);
+    const missedCountLast7Days = this.missedTracker.getMissedCountLast7Days(missedEvents, now);
     
     return {
       // Тренд
@@ -18,8 +27,8 @@ class BehavioralAnalysisEngine {
       
       // Риски
       risks: {
-        streakAtRisk: this.isStreakAtRisk(habit, completions),
-        motivationDeclining: this.isMotivationDeclining(completions, snoozeEvents),
+        streakAtRisk: this.isStreakAtRisk(habit, completions, missedEvents),
+        motivationDeclining: this.isMotivationDeclining(completions, snoozeEvents, missedEvents),
         habitForming: this.isHabitForming(habit, completions) // первые 21-66 дней
       },
       
@@ -28,6 +37,13 @@ class BehavioralAnalysisEngine {
         canBreakRecord: this.canBreakRecord(habit, completions),
         canReachMilestone: this.canReachMilestone(habit, completions),
         optimalTimeWindow: this.findOptimalTimeWindow(completions)
+      },
+      
+      // Статистика пропусков
+      missedStats: {
+        consecutiveMisses,
+        missedCountLast7Days,
+        totalMissed: this.missedTracker.getMissedCount(missedEvents)
       }
     };
   }
@@ -35,12 +51,13 @@ class BehavioralAnalysisEngine {
   /**
    * Предсказание вероятности выполнения
    */
-  predictCompletionProbability(habit, context, completions = [], snoozeEvents = []) {
+  predictCompletionProbability(habit, context, completions = [], snoozeEvents = [], missedEvents = [], now = Date.now()) {
     let probability = 0.5; // базовая вероятность
     
     const streak = this.calculateStreak(completions);
     const completionRate = this.calculateCompletionRate(completions, habit.createdAt);
-    const consecutiveMisses = this.calculateConsecutiveMisses(completions);
+    // Используем MissedTracker для точного подсчета подряд пропущенных дней
+    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(missedEvents, now);
     const lastSnoozeReason = snoozeEvents.length > 0 ? snoozeEvents[snoozeEvents.length - 1].reason : null;
     
     // Факторы, увеличивающие вероятность
@@ -174,11 +191,11 @@ class BehavioralAnalysisEngine {
     return 'negative';
   }
 
-  isStreakAtRisk(habit, completions) {
+  isStreakAtRisk(habit, completions, missedEvents = [], now = Date.now()) {
     const streak = this.calculateStreak(completions);
     if (streak === 0) return false;
     
-    const today = new Date();
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
     const todayTime = today.getTime();
     
@@ -188,17 +205,28 @@ class BehavioralAnalysisEngine {
       return date.getTime() === todayTime;
     });
     
-    return streak > 5 && !hasCompletionToday;
+    // Используем MissedTracker для проверки пропусков
+    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(missedEvents, now);
+    
+    return (streak > 5 && !hasCompletionToday) || consecutiveMisses > 0;
   }
 
-  isMotivationDeclining(completions, snoozeEvents) {
+  isMotivationDeclining(completions, snoozeEvents, missedEvents = [], now = Date.now()) {
     if (!completions || completions.length === 0) return true;
     
+    // Используем MissedTracker для проверки пропусков
+    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(missedEvents, now);
+    const missedCountLast7Days = this.missedTracker.getMissedCountLast7Days(missedEvents, now);
+    
+    // Если много пропусков подряд - мотивация точно снижается
+    if (consecutiveMisses >= 3) return true;
+    if (missedCountLast7Days >= 5) return true;
+    
     // Если много snooze и мало completions в последние дни
-    const now = new Date();
+    const nowDate = new Date(now);
     const last3Days = [];
     for (let i = 0; i < 3; i++) {
-      const date = new Date(now);
+      const date = new Date(nowDate);
       date.setDate(date.getDate() - i);
       date.setHours(0, 0, 0, 0);
       last3Days.push(date.getTime());
@@ -298,8 +326,18 @@ class BehavioralAnalysisEngine {
     return completionDays.size / daysSinceCreation;
   }
 
-  calculateConsecutiveMisses(completions) {
-    const today = new Date();
+  /**
+   * @deprecated Используйте MissedTracker.getConsecutiveMissedDays() вместо этого метода
+   * Оставлен для обратной совместимости
+   */
+  calculateConsecutiveMisses(completions, missedEvents = [], now = Date.now()) {
+    // Если есть missedEvents, используем MissedTracker
+    if (missedEvents && missedEvents.length > 0) {
+      return this.missedTracker.getConsecutiveMissedDays(missedEvents, now);
+    }
+    
+    // Fallback на старую логику для обратной совместимости
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
     
     let misses = 0;
