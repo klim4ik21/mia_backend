@@ -8,8 +8,7 @@
     "dev": "node server-v2.js"
   },
   "dependencies": {
-    "dotenv": "^16.3.1",
-    "axios": "^1.6.0"
+    "dotenv": "^16.3.1"
   },
   "engines": {
     "node": ">=18"
