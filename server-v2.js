@@ -6,6 +6,7 @@ const YandexGPTService = require('./yandex-gpt-service');
 const AIPlanner = require('./ai-planner');
 const SchedulingService = require('./scheduling-service');
 const { NotificationOrchestrator } = require('./engines');
+const YooKassaService = require('./yookassa-service');
 
 const PORT = process.env.PORT || 3000;
 
@@ -22,13 +23,24 @@ const schedulingService = new SchedulingService(notificationOrchestrator);
 // Сохраняем aiPlanner для обратной совместимости (если нужен)
 const aiPlanner = new AIPlanner(yandexGPT);
 
+// Инициализация YooKassa
+const YOOKASSA_SHOP_ID = process.env.YOOKASSA_SHOP_ID;
+const YOOKASSA_SECRET_KEY = process.env.YOOKASSA_SECRET_KEY;
+const yooKassa = YOOKASSA_SHOP_ID && YOOKASSA_SECRET_KEY 
+    ? new YooKassaService(YOOKASSA_SHOP_ID, YOOKASSA_SECRET_KEY)
+    : null;
+
+// In-memory хранилище для платежей и подписок (в продакшене использовать БД)
+const paymentsStore = new Map(); // paymentId -> { paymentId, plan, userId, status, createdAt }
+const subscriptionsStore = new Map(); // userId -> { userId, plan, expiresAt, paymentId, createdAt }
+
 const server = http.createServer(async (req, res) => {
     console.log(`\n📨 [Server] ${req.method} ${req.url}`);
 
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
     // Handle preflight
     if (req.method === 'OPTIONS') {
@@ -44,6 +56,14 @@ const server = http.createServer(async (req, res) => {
         await handleTelegramFeedback(req, res);
     } else if (req.url === '/api/analytics/event' && req.method === 'POST') {
         await handleAnalyticsEvent(req, res);
+    } else if (req.url === '/api/payments/create' && req.method === 'POST') {
+        await handleCreatePayment(req, res);
+    } else if (req.url.startsWith('/api/payments/') && req.url.endsWith('/status') && req.method === 'GET') {
+        await handlePaymentStatus(req, res);
+    } else if (req.url === '/api/subscription/activate' && req.method === 'POST') {
+        await handleActivateSubscription(req, res);
+    } else if (req.url === '/api/subscription/status' && req.method === 'GET') {
+        await handleSubscriptionStatus(req, res);
     } else if (req.url === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
@@ -382,6 +402,245 @@ async function sendAnalyticsToTelegram(logEntry) {
     });
 }
 
+// ==================== Payment Handlers ====================
+
+async function handleCreatePayment(req, res) {
+    let body = '';
+
+    req.on('data', chunk => {
+        body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+        try {
+            const request = JSON.parse(body);
+            const { amount, currency, description, plan, returnUrl, userId } = request;
+
+            // Валидация
+            if (!amount || !description || !plan || !returnUrl) {
+                throw new Error('Invalid request: amount, description, plan, and returnUrl are required');
+            }
+
+            if (!yooKassa) {
+                throw new Error('YooKassa service not configured. Set YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY');
+            }
+
+            console.log(`💳 [Payment] Creating payment: ${plan} - ${amount} ${currency || 'RUB'}`);
+
+            // Генерируем ключ идемпотентности
+            const idempotenceKey = yooKassa.generateIdempotenceKey();
+
+            // Создаем платеж через ЮKassa
+            const payment = await yooKassa.createPayment({
+                amount,
+                currency: currency || 'RUB',
+                description,
+                returnUrl
+            }, idempotenceKey);
+
+            console.log(`✅ [Payment] Payment created: ${payment.id}, status: ${payment.status}`);
+
+            // Сохраняем платеж в хранилище
+            paymentsStore.set(payment.id, {
+                paymentId: payment.id,
+                plan: plan,
+                userId: userId || 'anonymous',
+                status: payment.status,
+                createdAt: Date.now()
+            });
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                id: payment.id,
+                status: payment.status,
+                confirmationUrl: payment.confirmation?.confirmation_url
+            }));
+
+        } catch (error) {
+            console.error('❌ [Payment] Error:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: 'Failed to create payment',
+                details: error.message
+            }));
+        }
+    });
+}
+
+async function handlePaymentStatus(req, res) {
+    try {
+        // Извлекаем paymentId из URL: /api/payments/:paymentId/status
+        const urlParts = req.url.split('/');
+        const paymentId = urlParts[urlParts.length - 2]; // предпоследний элемент
+
+        if (!paymentId) {
+            throw new Error('Payment ID is required');
+        }
+
+        console.log(`💳 [Payment] Checking status for: ${paymentId}`);
+
+        if (!yooKassa) {
+            throw new Error('YooKassa service not configured');
+        }
+
+        // Проверяем статус через API ЮKassa
+        const payment = await yooKassa.getPaymentStatus(paymentId);
+
+        // Обновляем статус в хранилище
+        const storedPayment = paymentsStore.get(paymentId);
+        if (storedPayment) {
+            storedPayment.status = payment.status;
+            storedPayment.paid = payment.paid;
+            paymentsStore.set(paymentId, storedPayment);
+        }
+
+        console.log(`✅ [Payment] Status: ${payment.status}, paid: ${payment.paid}`);
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            status: payment.status,
+            paid: payment.paid || false
+        }));
+
+    } catch (error) {
+        console.error('❌ [Payment] Error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            error: 'Failed to check payment status',
+            details: error.message
+        }));
+    }
+}
+
+async function handleActivateSubscription(req, res) {
+    let body = '';
+
+    req.on('data', chunk => {
+        body += chunk.toString();
+    });
+
+    req.on('end', async () => {
+        try {
+            const request = JSON.parse(body);
+            const { plan, paymentId, userId } = request;
+
+            // Валидация
+            if (!plan || !paymentId) {
+                throw new Error('Invalid request: plan and paymentId are required');
+            }
+
+            console.log(`📱 [Subscription] Activating: ${plan} for payment ${paymentId}`);
+
+            if (!yooKassa) {
+                throw new Error('YooKassa service not configured');
+            }
+
+            // Проверяем статус платежа
+            const payment = await yooKassa.getPaymentStatus(paymentId);
+
+            if (payment.status !== 'succeeded' || !payment.paid) {
+                console.log(`⚠️ [Subscription] Payment not succeeded: ${payment.status}`);
+                res.writeHead(400, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    error: 'Payment not succeeded',
+                    paymentStatus: payment.status
+                }));
+                return;
+            }
+
+            // Вычисляем дату истечения подписки
+            const expiresAt = calculateSubscriptionExpiry(plan);
+
+            // Активируем подписку
+            const user = userId || 'anonymous';
+            subscriptionsStore.set(user, {
+                userId: user,
+                plan: plan,
+                expiresAt: expiresAt,
+                paymentId: paymentId,
+                createdAt: Date.now()
+            });
+
+            console.log(`✅ [Subscription] Activated: ${plan} until ${new Date(expiresAt).toISOString()}`);
+
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: true,
+                plan: plan,
+                expiresAt: new Date(expiresAt).toISOString()
+            }));
+
+        } catch (error) {
+            console.error('❌ [Subscription] Error:', error);
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                error: 'Failed to activate subscription',
+                details: error.message
+            }));
+        }
+    });
+}
+
+async function handleSubscriptionStatus(req, res) {
+    try {
+        // Извлекаем userId из query параметров или headers
+        const url = new URL(req.url, `http://${req.headers.host}`);
+        const userId = url.searchParams.get('userId') || req.headers['x-user-id'] || 'anonymous';
+
+        console.log(`📱 [Subscription] Checking status for user: ${userId}`);
+
+        const subscription = subscriptionsStore.get(userId);
+
+        if (!subscription) {
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                subscribed: false
+            }));
+            return;
+        }
+
+        // Проверяем, не истекла ли подписка
+        const now = Date.now();
+        const isExpired = subscription.expiresAt < now;
+        const subscribed = !isExpired;
+
+        if (isExpired) {
+            console.log(`⚠️ [Subscription] Subscription expired for user: ${userId}`);
+            subscriptionsStore.delete(userId);
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            subscribed: subscribed,
+            expiresAt: new Date(subscription.expiresAt).toISOString(),
+            plan: subscription.plan
+        }));
+
+    } catch (error) {
+        console.error('❌ [Subscription] Error:', error);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({
+            error: 'Failed to check subscription status',
+            details: error.message
+        }));
+    }
+}
+
+/**
+ * Вычисляет дату истечения подписки на основе плана
+ */
+function calculateSubscriptionExpiry(plan) {
+    const now = Date.now();
+    const planDurations = {
+        'premium_monthly': 30 * 24 * 60 * 60 * 1000, // 30 дней
+        'premium_yearly': 365 * 24 * 60 * 60 * 1000, // 365 дней
+        'premium_lifetime': Number.MAX_SAFE_INTEGER // никогда не истекает
+    };
+
+    const duration = planDurations[plan] || planDurations['premium_monthly'];
+    return now + duration;
+}
+
 server.listen(PORT, () => {
     console.log(`\n🚀 Smart Notifications Server`);
     console.log(`📡 Running on http://localhost:${PORT}`);
@@ -389,7 +648,12 @@ server.listen(PORT, () => {
     console.log(`   POST /api/schedule-notifications - Schedule smart notifications`);
     console.log(`   POST /api/tg/send - Send feedback to Telegram`);
     console.log(`   POST /api/analytics/event - Track analytics events`);
+    console.log(`   POST /api/payments/create - Create payment via YooKassa`);
+    console.log(`   GET  /api/payments/:paymentId/status - Check payment status`);
+    console.log(`   POST /api/subscription/activate - Activate subscription`);
+    console.log(`   GET  /api/subscription/status?userId=xxx - Check subscription status`);
     console.log(`   GET  /health - Health check`);
+    console.log(`\n💳 Payment Service: ${yooKassa ? '✅ Configured' : '⚠️  Not configured (set YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY)'}`);
     console.log(`\n💡 Test with iOS app or curl`);
     console.log(`\n`);
 });
