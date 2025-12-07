@@ -15,6 +15,8 @@ COPY server-v2.js ./
 COPY ai-planner.js ./
 COPY yandex-gpt-service.js ./
 COPY scheduling-service.js ./
+COPY yookassa-service.js ./
+COPY engines/ ./engines/
 
 # Expose port
 EXPOSE 3000
