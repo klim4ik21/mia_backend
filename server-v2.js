@@ -51,8 +51,19 @@ const server = http.createServer(async (req, res) => {
 
     // Роутинг
     // Парсим URL для правильной обработки query параметров
-    const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-    const pathname = url.pathname;
+    let url;
+    let pathname;
+    
+    try {
+        url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
+        pathname = url.pathname;
+    } catch (error) {
+        // Fallback для случаев, когда URL не может быть распарсен
+        pathname = req.url.split('?')[0];
+        url = { searchParams: new URLSearchParams(req.url.split('?')[1] || '') };
+    }
+
+    console.log(`🔍 [Server] Routing: ${req.method} ${pathname}`);
 
     if (pathname === '/api/schedule-notifications' && req.method === 'POST') {
         await handleScheduleNotifications(req, res);
@@ -63,18 +74,18 @@ const server = http.createServer(async (req, res) => {
     } else if (pathname === '/api/payments/create' && req.method === 'POST') {
         await handleCreatePayment(req, res);
     } else if (pathname.startsWith('/api/payments/') && pathname.endsWith('/status') && req.method === 'GET') {
-        await handlePaymentStatus(req, res);
+        await handlePaymentStatus(req, res, pathname);
     } else if (pathname === '/api/subscription/activate' && req.method === 'POST') {
         await handleActivateSubscription(req, res);
     } else if (pathname === '/api/subscription/status' && req.method === 'GET') {
-        await handleSubscriptionStatus(req, res);
+        await handleSubscriptionStatus(req, res, url);
     } else if (pathname === '/health' && req.method === 'GET') {
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
     } else {
-        console.log(`⚠️ [Server] 404: ${req.method} ${req.url}`);
+        console.log(`⚠️ [Server] 404: ${req.method} ${req.url} (pathname: ${pathname})`);
         res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found', path: pathname }));
+        res.end(JSON.stringify({ error: 'Not found', path: pathname, url: req.url }));
     }
 });
 
@@ -472,15 +483,17 @@ async function handleCreatePayment(req, res) {
     });
 }
 
-async function handlePaymentStatus(req, res) {
+async function handlePaymentStatus(req, res, pathname) {
     try {
         // Извлекаем paymentId из URL: /api/payments/:paymentId/status
-        const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-        const pathname = url.pathname;
         const urlParts = pathname.split('/');
-        const paymentId = urlParts[urlParts.length - 2]; // предпоследний элемент
+        // pathname = "/api/payments/123/status"
+        // urlParts = ["", "api", "payments", "123", "status"]
+        // paymentId = urlParts[3]
+        const paymentId = urlParts[3];
 
-        if (!paymentId) {
+        if (!paymentId || paymentId === 'status') {
+            console.error(`❌ [Payment] Invalid payment ID from pathname: ${pathname}`);
             throw new Error('Payment ID is required');
         }
 
@@ -588,11 +601,19 @@ async function handleActivateSubscription(req, res) {
     });
 }
 
-async function handleSubscriptionStatus(req, res) {
+async function handleSubscriptionStatus(req, res, url) {
     try {
         // Извлекаем userId из query параметров или headers
-        const url = new URL(req.url, `http://${req.headers.host}`);
-        const userId = url.searchParams.get('userId') || req.headers['x-user-id'] || 'anonymous';
+        let userId = 'anonymous';
+        
+        if (url && url.searchParams) {
+            userId = url.searchParams.get('userId') || userId;
+        }
+        
+        // Также проверяем headers
+        userId = req.headers['x-user-id'] || userId;
+        
+        // Если userId не передан, используем 'anonymous' (для тестирования)
 
         console.log(`📱 [Subscription] Checking status for user: ${userId}`);
 
