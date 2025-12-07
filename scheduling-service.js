@@ -29,6 +29,7 @@ class SchedulingService {
         console.log(`📅 [Scheduling] Current time: ${new Date(now)}`);
 
         const allNotifications = [];
+        const allNewMissedEvents = []; // Собираем все новые missed events
 
         // Для каждой привычки генерируем уведомления
         for (const habit of habits) {
@@ -57,9 +58,10 @@ class SchedulingService {
                         notifications = result;
                     } else {
                         notifications = result.notifications || [];
-                        // newMissedEvents можно использовать для сохранения на клиенте
+                        // Собираем новые missed events
                         if (result.newMissedEvents && result.newMissedEvents.length > 0) {
                             console.log(`   📊 New missed events detected: ${result.newMissedEvents.length}`);
+                            allNewMissedEvents.push(...result.newMissedEvents);
                         }
                     }
                 } else if (this.aiPlanner) {
@@ -89,10 +91,14 @@ class SchedulingService {
 
         console.log(`\n✅ [Scheduling] Total notifications: ${optimized.length}`);
         console.log(`✅ [Scheduling] Valid until: ${new Date(validUntil)}`);
+        if (allNewMissedEvents.length > 0) {
+            console.log(`📊 [Scheduling] Total new missed events: ${allNewMissedEvents.length}`);
+        }
 
         return {
             notifications: optimized,
-            validUntil: validUntil
+            validUntil: validUntil,
+            ...(allNewMissedEvents.length > 0 && { newMissedEvents: allNewMissedEvents })
         };
     }
 

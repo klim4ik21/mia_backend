@@ -84,7 +84,7 @@ class UserContextEngine {
     const milestones = [7, 14, 30, 100];
     const nextMilestone = milestones.find(m => m > streak) || null;
     const daysToMilestone = nextMilestone ? nextMilestone - streak : null;
-    const isAtRisk = this.isStreakAtRisk(streak, completions, allMissedEvents);
+    const isAtRisk = this.isStreakAtRisk(streak, completions, allMissedEvents, now);
     
     return {
       // Статистика
@@ -362,11 +362,11 @@ class UserContextEngine {
     return 'weak';
   }
 
-  isStreakAtRisk(streak, completions, missedEvents = []) {
+  isStreakAtRisk(streak, completions, missedEvents = [], now = Date.now()) {
     if (streak === 0) return false;
     
-    // Проверяем, был ли streak сегодня
-    const today = new Date();
+    // Проверяем, был ли streak сегодня (используем переданный now для консистентности)
+    const today = new Date(now);
     today.setHours(0, 0, 0, 0);
     const todayTime = today.getTime();
     
@@ -376,8 +376,8 @@ class UserContextEngine {
       return date.getTime() === todayTime;
     });
     
-    // Проверяем пропуски через MissedTracker
-    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(missedEvents);
+    // Проверяем пропуски через MissedTracker (передаем now для консистентности)
+    const consecutiveMisses = this.missedTracker.getConsecutiveMissedDays(missedEvents, now);
     
     // Если streak > 5 и нет выполнения сегодня - риск
     // Или если есть подряд пропущенные дни
