@@ -35,15 +35,21 @@ const paymentsStore = new Map(); // paymentId -> { paymentId, plan, userId, stat
 const subscriptionsStore = new Map(); // userId -> { userId, plan, expiresAt, paymentId, createdAt }
 
 const server = http.createServer(async (req, res) => {
-    console.log(`\n📨 [Server] ${req.method} ${req.url}`);
+    const requestId = Math.random().toString(36).substring(7);
+    const startTime = Date.now();
+    
+    console.log(`\n📨 [Server] [${requestId}] ${req.method} ${req.url}`);
+    console.log(`📋 [Server] [${requestId}] Headers:`, JSON.stringify(req.headers, null, 2));
 
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS, PUT, DELETE');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-User-Id');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Type');
 
     // Handle preflight
     if (req.method === 'OPTIONS') {
+        console.log(`✅ [Server] [${requestId}] CORS preflight - OK`);
         res.writeHead(200);
         res.end();
         return;
@@ -57,39 +63,68 @@ const server = http.createServer(async (req, res) => {
     try {
         url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
         pathname = url.pathname;
+        console.log(`🔍 [Server] [${requestId}] Parsed pathname: ${pathname}`);
     } catch (error) {
         // Fallback для случаев, когда URL не может быть распарсен
         pathname = req.url.split('?')[0];
         url = { searchParams: new URLSearchParams(req.url.split('?')[1] || '') };
+        console.log(`⚠️ [Server] [${requestId}] URL parse error, using fallback: ${pathname}`);
     }
 
-    console.log(`🔍 [Server] Routing: ${req.method} ${pathname}`);
+    console.log(`🔍 [Server] [${requestId}] Routing: ${req.method} ${pathname}`);
 
-    if (pathname === '/api/schedule-notifications' && req.method === 'POST') {
-        await handleScheduleNotifications(req, res);
-    } else if (pathname === '/api/tg/send' && req.method === 'POST') {
-        await handleTelegramFeedback(req, res);
-    } else if (pathname === '/api/analytics/event' && req.method === 'POST') {
-        await handleAnalyticsEvent(req, res);
-    } else if (pathname === '/api/payments/create' && req.method === 'POST') {
-        await handleCreatePayment(req, res);
-    } else if (pathname.startsWith('/api/payments/') && pathname.endsWith('/status') && req.method === 'GET') {
-        await handlePaymentStatus(req, res, pathname);
-    } else if (pathname === '/api/subscription/activate' && req.method === 'POST') {
-        await handleActivateSubscription(req, res);
-    } else if (pathname === '/api/subscription/status' && req.method === 'GET') {
-        await handleSubscriptionStatus(req, res, url);
-    } else if (pathname === '/health' && req.method === 'GET') {
-        res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
-    } else {
-        console.log(`⚠️ [Server] 404: ${req.method} ${req.url} (pathname: ${pathname})`);
-        res.writeHead(404, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Not found', path: pathname, url: req.url }));
+    try {
+        if (pathname === '/api/schedule-notifications' && req.method === 'POST') {
+            console.log(`✅ [Server] [${requestId}] Routing to handleScheduleNotifications`);
+            await handleScheduleNotifications(req, res, requestId);
+        } else if (pathname === '/api/tg/send' && req.method === 'POST') {
+            console.log(`✅ [Server] [${requestId}] Routing to handleTelegramFeedback`);
+            await handleTelegramFeedback(req, res, requestId);
+        } else if (pathname === '/api/analytics/event' && req.method === 'POST') {
+            console.log(`✅ [Server] [${requestId}] Routing to handleAnalyticsEvent`);
+            await handleAnalyticsEvent(req, res, requestId);
+        } else if (pathname === '/api/payments/create' && req.method === 'POST') {
+            console.log(`✅ [Server] [${requestId}] Routing to handleCreatePayment`);
+            await handleCreatePayment(req, res, requestId);
+        } else if (pathname.startsWith('/api/payments/') && pathname.endsWith('/status') && req.method === 'GET') {
+            console.log(`✅ [Server] [${requestId}] Routing to handlePaymentStatus`);
+            await handlePaymentStatus(req, res, pathname, requestId);
+        } else if (pathname === '/api/subscription/activate' && req.method === 'POST') {
+            console.log(`✅ [Server] [${requestId}] Routing to handleActivateSubscription`);
+            await handleActivateSubscription(req, res, requestId);
+        } else if (pathname === '/api/subscription/status' && req.method === 'GET') {
+            console.log(`✅ [Server] [${requestId}] Routing to handleSubscriptionStatus`);
+            await handleSubscriptionStatus(req, res, url, requestId);
+        } else if (pathname === '/health' && req.method === 'GET') {
+            console.log(`✅ [Server] [${requestId}] Health check`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ status: 'ok', timestamp: Date.now() }));
+        } else {
+            console.log(`❌ [Server] [${requestId}] 404: ${req.method} ${req.url} (pathname: ${pathname})`);
+            console.log(`❌ [Server] [${requestId}] Available routes:`);
+            console.log(`   - POST /api/schedule-notifications`);
+            console.log(`   - POST /api/tg/send`);
+            console.log(`   - POST /api/analytics/event`);
+            console.log(`   - POST /api/payments/create`);
+            console.log(`   - GET  /api/payments/:id/status`);
+            console.log(`   - POST /api/subscription/activate`);
+            console.log(`   - GET  /api/subscription/status`);
+            res.writeHead(404, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Not found', path: pathname, url: req.url, method: req.method }));
+        }
+    } catch (error) {
+        console.error(`❌ [Server] [${requestId}] Unhandled error:`, error);
+        if (!res.headersSent) {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Internal server error', details: error.message }));
+        }
+    } finally {
+        const duration = Date.now() - startTime;
+        console.log(`⏱️  [Server] [${requestId}] Request completed in ${duration}ms`);
     }
 });
 
-async function handleScheduleNotifications(req, res) {
+async function handleScheduleNotifications(req, res, requestId = 'unknown') {
     let body = '';
 
     req.on('data', chunk => {
@@ -129,7 +164,7 @@ async function handleScheduleNotifications(req, res) {
     });
 }
 
-async function handleTelegramFeedback(req, res) {
+async function handleTelegramFeedback(req, res, requestId = 'unknown') {
     let body = '';
     const startTime = Date.now();
 
@@ -296,7 +331,7 @@ async function sendTelegramPhoto(botToken, chatId, base64Image) {
     });
 }
 
-async function handleAnalyticsEvent(req, res) {
+async function handleAnalyticsEvent(req, res, requestId = 'unknown') {
     let body = '';
 
     req.on('data', chunk => {
@@ -420,7 +455,7 @@ async function sendAnalyticsToTelegram(logEntry) {
 
 // ==================== Payment Handlers ====================
 
-async function handleCreatePayment(req, res) {
+async function handleCreatePayment(req, res, requestId) {
     let body = '';
 
     req.on('data', chunk => {
@@ -429,19 +464,24 @@ async function handleCreatePayment(req, res) {
 
     req.on('end', async () => {
         try {
+            console.log(`📦 [Payment] [${requestId}] Request body received: ${body.length} bytes`);
             const request = JSON.parse(body);
+            console.log(`📦 [Payment] [${requestId}] Parsed request:`, JSON.stringify(request, null, 2));
+            
             const { amount, currency, description, plan, returnUrl, userId } = request;
 
             // Валидация
             if (!amount || !description || !plan || !returnUrl) {
+                console.error(`❌ [Payment] [${requestId}] Validation failed:`, { amount, description, plan, returnUrl });
                 throw new Error('Invalid request: amount, description, plan, and returnUrl are required');
             }
 
             if (!yooKassa) {
+                console.error(`❌ [Payment] [${requestId}] YooKassa not configured`);
                 throw new Error('YooKassa service not configured. Set YOOKASSA_SHOP_ID and YOOKASSA_SECRET_KEY');
             }
 
-            console.log(`💳 [Payment] Creating payment: ${plan} - ${amount} ${currency || 'RUB'}`);
+            console.log(`💳 [Payment] [${requestId}] Creating payment: ${plan} - ${amount} ${currency || 'RUB'}`);
 
             // Генерируем ключ идемпотентности
             const idempotenceKey = yooKassa.generateIdempotenceKey();
@@ -454,7 +494,7 @@ async function handleCreatePayment(req, res) {
                 returnUrl
             }, idempotenceKey);
 
-            console.log(`✅ [Payment] Payment created: ${payment.id}, status: ${payment.status}`);
+            console.log(`✅ [Payment] [${requestId}] Payment created: ${payment.id}, status: ${payment.status}`);
 
             // Сохраняем платеж в хранилище
             paymentsStore.set(payment.id, {
@@ -465,25 +505,32 @@ async function handleCreatePayment(req, res) {
                 createdAt: Date.now()
             });
 
-            res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
+            const response = {
                 id: payment.id,
                 status: payment.status,
                 confirmationUrl: payment.confirmation?.confirmation_url
-            }));
+            };
+            
+            console.log(`📤 [Payment] [${requestId}] Sending response:`, JSON.stringify(response, null, 2));
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify(response));
+            console.log(`✅ [Payment] [${requestId}] Response sent successfully`);
 
         } catch (error) {
-            console.error('❌ [Payment] Error:', error);
-            res.writeHead(500, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({
-                error: 'Failed to create payment',
-                details: error.message
-            }));
+            console.error(`❌ [Payment] [${requestId}] Error:`, error);
+            console.error(`❌ [Payment] [${requestId}] Stack:`, error.stack);
+            if (!res.headersSent) {
+                res.writeHead(500, { 'Content-Type': 'application/json' });
+                res.end(JSON.stringify({
+                    error: 'Failed to create payment',
+                    details: error.message
+                }));
+            }
         }
     });
 }
 
-async function handlePaymentStatus(req, res, pathname) {
+async function handlePaymentStatus(req, res, pathname, requestId = 'unknown') {
     try {
         // Извлекаем paymentId из URL: /api/payments/:paymentId/status
         const urlParts = pathname.split('/');
@@ -532,7 +579,7 @@ async function handlePaymentStatus(req, res, pathname) {
     }
 }
 
-async function handleActivateSubscription(req, res) {
+async function handleActivateSubscription(req, res, requestId = 'unknown') {
     let body = '';
 
     req.on('data', chunk => {
@@ -601,7 +648,7 @@ async function handleActivateSubscription(req, res) {
     });
 }
 
-async function handleSubscriptionStatus(req, res, url) {
+async function handleSubscriptionStatus(req, res, url, requestId = 'unknown') {
     try {
         // Извлекаем userId из query параметров или headers
         let userId = 'anonymous';
